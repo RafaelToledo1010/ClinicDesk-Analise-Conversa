@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Clínica Climes — Processar Arquivo</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <div class="logo">
+        <span class="logo-icon">🏥</span>
+        <div>
+          <h1>Clínica Climes</h1>
+          <p>Análise de Conversas</p>
+        </div>
+      </div>
+      <a href="/" class="btn-outline">← Voltar</a>
+    </div>
+  </header>
+  <main>
+    <section class="card">
+      <h2>📤 Enviar novo arquivo</h2>
+      <p class="subtitulo">Selecione o arquivo Excel exportado do sistema da clínica.</p>
+      {% if erro %}
+      <div class="alerta alerta-erro">❌ {{ erro }}</div>
+      {% endif %}
+      {% if not sucesso %}
+      <form method="POST" enctype="multipart/form-data" id="form-upload">
+        <div class="upload-area" id="upload-area">
+          <div class="upload-icon">📁</div>
+          <p>Arraste o arquivo aqui ou clique para selecionar</p>
+          <p class="upload-sub">Formato aceito: .xlsx</p>
+          <input type="file" name="arquivo" id="arquivo" accept=".xlsx,.xls" required>
+        </div>
+        <div id="arquivo-nome" class="arquivo-nome" style="display:none"></div>
+        <button type="submit" class="btn-primary btn-large" id="btn-enviar">
+          Estruturar conversas (Etapa 1)
+        </button>
+      </form>
+      {% endif %}
+      {% if sucesso %}
+      <div class="alerta alerta-sucesso">✅ Arquivo estruturado com sucesso!</div>
+      <div class="stats-grid">
+        <div class="stat-item">
+          <span class="stat-num">{{ stats.total }}</span>
+          <span class="stat-label">Total de conversas</span>
+        </div>
+        <div class="stat-item stat-ia">
+          <span class="stat-num">{{ stats.requer_ia }}</span>
+          <span class="stat-label">Precisam de análise IA</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-num">{{ stats.total - stats.requer_ia }}</span>
+          <span class="stat-label">Pré-classificadas</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-num">~US$ {{ "%.2f"|format(stats.requer_ia * 0.02) }}</span>
+          <span class="stat-label">Custo estimado</span>
+        </div>
+      </div>
+      <div class="detalhes">
+        <p>📋 Lembretes de consulta: <strong>{{ stats.lembrete_consulta }}</strong></p>
+        <p>🏢 Internos / fornecedores: <strong>{{ stats.interno }}</strong></p>
+        <p>📸 Instagram sem interesse: <strong>{{ stats.instagram }}</strong></p>
+        <p>🔗 Conversas fragmentadas: <strong>{{ stats.fragmentada }}</strong></p>
+      </div>
+      <div class="acoes">
+        <button class="btn-primary btn-large" id="btn-analisar" onclick="iniciarAnalise('{{ nome }}')">
+          🤖 Analisar com IA (Etapa 2)
+        </button>
+        <a href="/" class="btn-outline">Fazer depois</a>
+      </div>
+      <div id="progresso-area" style="display:none">
+        <div class="progresso-barra-container">
+          <div class="progresso-barra" id="progresso-barra"></div>
+        </div>
+        <p id="progresso-texto" class="progresso-texto">Iniciando análise...</p>
+      </div>
+      <div id="resultado-area" style="display:none">
+        <div class="alerta alerta-sucesso">🎉 Análise concluída!</div>
+        <a id="btn-download" href="#" class="btn-primary btn-large">⬇ Baixar Excel</a>
+      </div>
+      {% endif %}
+    </section>
+  </main>
+  <script>
+    const uploadArea = document.getElementById('upload-area');
+    const inputArquivo = document.getElementById('arquivo');
+    const nomeDiv = document.getElementById('arquivo-nome');
+    if (uploadArea) {
+      uploadArea.addEventListener('click', () => inputArquivo.click());
+      uploadArea.addEventListener('dragover', e => { e.preventDefault(); uploadArea.classList.add('drag'); });
+      uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('drag'));
+      uploadArea.addEventListener('drop', e => {
+        e.preventDefault();
+        uploadArea.classList.remove('drag');
+        inputArquivo.files = e.dataTransfer.files;
+        mostrarNome(e.dataTransfer.files[0].name);
+      });
+      inputArquivo.addEventListener('change', () => {
+        if (inputArquivo.files[0]) mostrarNome(inputArquivo.files[0].name);
+      });
+    }
+    function mostrarNome(nome) {
+      nomeDiv.textContent = '📄 ' + nome;
+      nomeDiv.style.display = 'block';
+    }
+    function iniciarAnalise(nome) {
+      document.getElementById('btn-analisar').disabled = true;
+      document.getElementById('btn-analisar').textContent = 'Analisando...';
+      document.getElementById('progresso-area').style.display = 'block';
+      fetch('/analisar/' + nome, { method: 'POST' })
+        .then(r => r.json())
+        .then(data => {
+          if (data.erro) { alert('Erro: ' + data.erro); return; }
+          verificarProgresso(data.job_id, nome);
+        });
+    }
+    function verificarProgresso(jobId, nome) {
+      fetch('/status/' + jobId)
+        .then(r => r.json())
+        .then(data => {
+          const total = data.total || 1;
+          const prog = data.progresso || 0;
+          const pct = Math.round((prog / total) * 100);
+          document.getElementById('progresso-barra').style.width = pct + '%';
+          document.getElementById('progresso-texto').textContent =
+            `Analisando conversa ${prog} de ${total}...`;
+          if (data.status === 'concluido') {
+            document.getElementById('progresso-area').style.display = 'none';
+            document.getElementById('resultado-area').style.display = 'block';
+            document.getElementById('btn-download').href = '/download/' + data.excel;
+          } else if (data.status === 'erro') {
+            alert('Erro na análise: ' + data.erro);
+          } else {
+            setTimeout(() => verificarProgresso(jobId, nome), 2000);
+          }
+        });
+    }
+  </script>
+</body>
+</html>
