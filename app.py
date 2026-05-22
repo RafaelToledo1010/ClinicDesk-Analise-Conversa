@@ -2,7 +2,7 @@
 app.py
 Servidor web Flask — Clínica Climes
 Variáveis de ambiente: ANTHROPIC_API_KEY, SECRET_KEY
-Endpoints expostos: /, /processar, /analisar, /download, /status
+Endpoints expostos: /, /login, /logout, /trocar-senha, /processar, /analisar, /download, /status
 """
 
 import json
@@ -10,6 +10,7 @@ import os
 import threading
 import uuid
 from datetime import datetime
+from functools import wraps
 from pathlib import Path
 
 from flask import (
@@ -19,10 +20,7 @@ from flask import (
 
 from estruturar import estruturar
 from analisar import analisar_todas, gerar_excel
-
-# ─────────────────────────────────────────────
-# CONFIGURAÇÃO
-# ─────────────────────────────────────────────
+from auth import autenticar, trocar_senha
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'clinica-climes-2026')
@@ -38,10 +36,62 @@ jobs = {}
 
 
 # ─────────────────────────────────────────────
-# ROTAS
+# AUTENTICAÇÃO
+# ─────────────────────────────────────────────
+
+def login_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if 'usuario' not in session:
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated
+
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        email = request.form.get('email', '').strip().lower()
+        senha = request.form.get('senha', '')
+        user = autenticar(email, senha)
+        if not user:
+            return render_template('login.html', erro='E-mail ou senha incorretos.')
+        session['usuario'] = email
+        session['nome'] = user.get('nome', email)
+        if user.get('trocar_senha'):
+            return redirect(url_for('trocar_senha_route'))
+        return redirect(url_for('index'))
+    return render_template('login.html')
+
+
+@app.route('/trocar-senha', methods=['GET', 'POST'])
+def trocar_senha_route():
+    if 'usuario' not in session:
+        return redirect(url_for('login'))
+    if request.method == 'POST':
+        senha_nova = request.form.get('senha_nova', '')
+        senha_confirma = request.form.get('senha_confirma', '')
+        if len(senha_nova) < 6:
+            return render_template('trocar_senha.html', erro='A senha deve ter pelo menos 6 caracteres.')
+        if senha_nova != senha_confirma:
+            return render_template('trocar_senha.html', erro='As senhas não coincidem.')
+        trocar_senha(session['usuario'], senha_nova)
+        return redirect(url_for('index'))
+    return render_template('trocar_senha.html')
+
+
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect(url_for('login'))
+
+
+# ─────────────────────────────────────────────
+# ROTAS PRINCIPAIS
 # ─────────────────────────────────────────────
 
 @app.route('/')
+@login_required
 def index():
     historico = []
     for f in sorted(OUTPUT_FOLDER.glob('*.json'), reverse=True)[:10]:
@@ -57,10 +107,11 @@ def index():
             })
         except Exception:
             continue
-    return render_template('index.html', historico=historico)
+    return render_template('index.html', historico=historico, nome=session.get('nome',''))
 
 
 @app.route('/processar', methods=['GET', 'POST'])
+@login_required
 def processar():
     if request.method == 'POST':
         arquivo = request.files.get('arquivo')
@@ -84,6 +135,7 @@ def processar():
 
 
 @app.route('/analisar/<nome>', methods=['POST'])
+@login_required
 def analisar(nome):
     if not ANTHROPIC_API_KEY:
         return jsonify({'erro': 'Chave de API não configurada.'}), 400
@@ -118,12 +170,14 @@ def analisar(nome):
 
 
 @app.route('/status/<job_id>')
+@login_required
 def status(job_id):
     job = jobs.get(job_id, {'status': 'nao_encontrado'})
     return jsonify(job)
 
 
 @app.route('/download/<nome>')
+@login_required
 def download(nome):
     caminho = OUTPUT_FOLDER / nome
     if not caminho.exists():
