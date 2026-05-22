@@ -5,7 +5,6 @@ Gerenciamento de usuários e autenticação
 
 import json
 import hashlib
-import os
 from pathlib import Path
 
 USERS_FILE = Path('users.json')
@@ -15,9 +14,8 @@ def hash_senha(senha):
 
 def carregar_usuarios():
     if not USERS_FILE.exists():
-        # Usuários iniciais
         usuarios = {
-            "rafael@clinicaclimes.com.br": {
+            "rafaeltoledo@clinicdesk.com.br": {
                 "senha": hash_senha("senha123"),
                 "nome": "Rafael",
                 "trocar_senha": True
