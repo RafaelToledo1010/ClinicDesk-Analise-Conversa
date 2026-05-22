@@ -1,1 +1,89 @@
-
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Clínica Climes — Dashboard</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <div class="logo">
+        <span class="logo-icon">🏥</span>
+        <div>
+          <h1>Clínica Climes</h1>
+          <p>Análise de Conversas</p>
+        </div>
+      </div>
+      <a href="/processar" class="btn-primary">+ Novo Arquivo</a>
+    </div>
+  </header>
+  <main>
+    {% if historico %}
+    {% set ultimo = historico[0] %}
+    {% set total_pac = ultimo.agendaram + ultimo.nao_agendaram %}
+    {% set taxa = ((ultimo.agendaram / total_pac * 100) | round(1)) if total_pac > 0 else 0 %}
+    <section class="kpis">
+      <div class="kpi kpi-total">
+        <span class="kpi-valor">{{ ultimo.total }}</span>
+        <span class="kpi-label">Total de conversas</span>
+        <span class="kpi-sub">{{ ultimo.nome }}</span>
+      </div>
+      <div class="kpi kpi-ag">
+        <span class="kpi-valor">{{ ultimo.agendaram }}</span>
+        <span class="kpi-label">Agendamentos</span>
+        <span class="kpi-sub">confirmados</span>
+      </div>
+      <div class="kpi kpi-nag">
+        <span class="kpi-valor">{{ ultimo.nao_agendaram }}</span>
+        <span class="kpi-label">Não agendaram</span>
+        <span class="kpi-sub">oportunidades perdidas</span>
+      </div>
+      <div class="kpi kpi-taxa">
+        <span class="kpi-valor">{{ taxa }}%</span>
+        <span class="kpi-label">Taxa de conversão</span>
+        <span class="kpi-sub">pacientes externos</span>
+      </div>
+    </section>
+    <section class="card">
+      <h2>Histórico de análises</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Arquivo</th><th>Data</th><th>Total</th>
+            <th>Agendaram</th><th>Não agendaram</th><th>Taxa</th><th>Download</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for h in historico %}
+          {% set tp = h.agendaram + h.nao_agendaram %}
+          {% set tx = ((h.agendaram / tp * 100) | round(1)) if tp > 0 else 0 %}
+          <tr>
+            <td><strong>{{ h.nome }}</strong></td>
+            <td>{{ h.data }}</td>
+            <td>{{ h.total }}</td>
+            <td class="verde">{{ h.agendaram }}</td>
+            <td class="vermelho">{{ h.nao_agendaram }}</td>
+            <td>
+              <span class="badge {% if tx >= 30 %}badge-verde{% elif tx >= 20 %}badge-amarelo{% else %}badge-vermelho{% endif %}">
+                {{ tx }}%
+              </span>
+            </td>
+            <td><a href="/download/{{ h.nome }}.xlsx" class="btn-sm">Baixar Excel</a></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+    {% else %}
+    <section class="empty">
+      <div class="empty-icon">📂</div>
+      <h2>Nenhuma análise ainda</h2>
+      <p>Envie o primeiro arquivo Excel da clínica para começar.</p>
+      <a href="/processar" class="btn-primary">+ Novo Arquivo</a>
+    </section>
+    {% endif %}
+  </main>
+</body>
+</html>
