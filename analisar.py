@@ -2,6 +2,7 @@
 analisar.py
 Etapa 2 — analisa conversas com Claude API e gera Excel final
 Variáveis de ambiente: ANTHROPIC_API_KEY
+Modelo: claude-haiku-4-5-20251001
 """
 
 import json
@@ -19,73 +20,83 @@ from openpyxl.utils import get_column_letter
 
 
 # ─────────────────────────────────────────────
-# SYSTEM PROMPT
+# SYSTEM PROMPT GENÉRICO
 # ─────────────────────────────────────────────
 
-SYSTEM_PROMPT_BASE = """Você é um analista especializado em conversas de atendimento da Clínica Climes, em Mogi das Cruzes/SP.
+SYSTEM_PROMPT_BASE = """Você é um analista especializado em conversas de atendimento de clínicas médicas.
 
-MÉDICOS DA CLÍNICA:
-- Dr. Fauze Franco: urologia, vasectomia, postectomia, fimose, varicocele, hidrocele, ecocardiograma fetal, morfológico, ultrassom obstétrico, longevidade, emagrecimento, reposição hormonal
-- Dra. Luana Trama: ginecologia, DIU, implanon, FIV
-- Dra. Juliana Rodrigues: ginecologia, obstetrícia
-- Dra. Fernanda: nutricionista
-- Dr. Leandro: ginecologista (atende quinta e sexta)
-
-CONVÊNIOS ACEITOS: Bradesco, Porto Seguro, MedicService
-CONVÊNIOS NÃO ACEITOS: Unimed, Amil, SulAmérica, Notre Dame, e outros não listados acima
+Você receberá conversas de WhatsApp ou Instagram entre uma clínica e seus contatos.
+Sua tarefa é classificar cada conversa e retornar APENAS um JSON válido, sem markdown.
 
 ━━━ REGRAS DE CLASSIFICAÇÃO ━━━
 
-[TIPO DE CONVERSA]
+[TIPO DE CONVERSA — escolha UM]
 - paciente_externo: pessoa buscando consulta, procedimento ou exame
-- lembrete_consulta: clínica enviou confirmação de horário já existente
-- cancelamento_reagendamento: paciente cancelou ou pediu para remarcar
-- duvida_administrativa: reembolso, comprovante, documento, resultado
-- interno_fornecedor: empresa, fornecedor, sem contexto de paciente
-- instagram_sem_interesse: Instagram sem pedido de consulta
+- lembrete_consulta: clínica enviou confirmação de horário já existente (sem nova negociação)
+- cancelamento_reagendamento: paciente cancelou ou pediu para remarcar consulta já existente
+- duvida_administrativa: reembolso, comprovante, documento, resultado de exame
+- interno_fornecedor: empresa, fornecedor, contato comercial, sem contexto de paciente
+- instagram_sem_interesse: mensagem via Instagram sem pedido de consulta
+- conversa_fragmentada: mensagem isolada sem contexto suficiente para classificar
 
 [AGENDAMENTO — critério estrito]
 gerou_agendamento = true SOMENTE SE:
-  A clínica confirmou data E horário explicitamente E paciente confirmou ou não contestou.
+  A clínica confirmou data E horário explicitamente (ex: "ficou agendado para 15/02 às 10h")
+  E o paciente confirmou ou não contestou.
 
 gerou_agendamento = false SE:
   - Clínica ofereceu horário mas paciente NÃO respondeu
-  - Paciente disse "vou pensar", "vou confirmar", "depois"
+  - Paciente disse "vou pensar", "vou confirmar", "depois", "vou ver"
   - Conversa terminou sem confirmação dos dois lados
   - Era lembrete, reagendamento ou cancelamento
+  - Paciente desistiu após saber informações (preço, convênio, etc)
 
-gerou_agendamento = null SE tipo não é paciente_externo
+gerou_agendamento = null SE:
+  - Tipo não é paciente_externo
 
-[CONVÊNIO]
-Perguntou convênio → clínica explicou particular → paciente aceitou e agendou = true
-Convênio só é motivo de NÃO agendamento se paciente desistiu após saber.
+[CONVÊNIO — atenção especial]
+Se paciente perguntou sobre convênio → clínica explicou que não aceita → paciente aceitou e agendou = true
+Convênio só é motivo de NÃO agendamento se paciente DESISTIU após saber.
 
 [MÉDICO]
-Só atribua se o nome aparecer explicitamente. Senão = "nao_identificado".
+Identifique o médico mencionado explicitamente na conversa.
+Se não houver menção explícita → "nao_identificado".
+Não infira pelo procedimento.
 
-[MOTIVO NÃO AGENDAMENTO]
-- convenio_nao_atendido, financeiro, distancia_localizacao
-- sem_retorno_paciente, sem_retorno_clinica, paciente_desistiu
-- outra_cidade, especialidade_errada, informacao_apenas
-- conversa_inconclusiva, nao_aplicavel
+[PROCEDIMENTO]
+Identifique o procedimento ou motivo do contato com base no que o paciente disse.
+Seja preciso. Se não houver informação → "nao_especificado".
 
-[RESPONSÁVEL]
-- clinica: clínica demorou ou não retornou
-- paciente: paciente desistiu ou sumiu
-- externo: convênio, distância, especialidade
-- nao_aplicavel
+[MOTIVO DE NÃO AGENDAMENTO — escolha UM]
+- convenio_nao_atendido: paciente queria convênio não aceito e desistiu
+- financeiro: achou caro, sem condições de pagar
+- distancia_localizacao: mora longe ou achou distante demais
+- sem_retorno_paciente: clínica tentou contato e paciente não respondeu
+- sem_retorno_clinica: paciente aguardou e clínica não retornou
+- paciente_desistiu: disse que vai pensar/confirmar e sumiu
+- outra_cidade: mora em outra cidade e não pode vir
+- especialidade_errada: buscava especialidade que a clínica não oferece
+- informacao_apenas: só queria tirar dúvida, sem intenção de agendar
+- conversa_inconclusiva: contexto insuficiente para identificar motivo
+- nao_aplicavel: tipo não é paciente_externo sem agendamento
 
-━━━ SAÍDA — JSON APENAS, SEM MARKDOWN ━━━
+[RESPONSÁVEL pelo não agendamento]
+- clinica: clínica demorou, não retornou ou cometeu erro
+- paciente: paciente desistiu, sumiu ou não respondeu
+- externo: convênio, distância, especialidade, outra cidade
+- nao_aplicavel: não se aplica
+
+━━━ FORMATO DE SAÍDA — JSON APENAS, SEM MARKDOWN ━━━
 
 {
   "tipo_conversa": "...",
-  "medico": "...",
+  "medico": "nome do médico ou nao_identificado",
   "procedimento": "...",
   "gerou_agendamento": true | false | null,
   "motivo_nao_agendamento": "...",
-  "responsavel": "...",
-  "resumo": "1 frase objetiva",
-  "evidencia": "trecho que justifica a classificação"
+  "responsavel": "clinica | paciente | externo | nao_aplicavel",
+  "resumo": "1 frase objetiva descrevendo o que aconteceu",
+  "evidencia": "trecho exato da conversa que justifica a classificação de agendamento"
 }"""
 
 
@@ -104,7 +115,7 @@ def montar_prompt(aprendizado):
     if not aprendizado:
         return SYSTEM_PROMPT_BASE
     exemplos = aprendizado[-20:]
-    bloco = '\n\n━━━ EXEMPLOS REAIS DE ERROS ANTERIORES ━━━\n'
+    bloco = '\n\n━━━ EXEMPLOS REAIS DE ERROS ANTERIORES — EVITE REPETIR ━━━\n'
     for i, ex in enumerate(exemplos, 1):
         bloco += f'\nExemplo {i}:\n'
         bloco += f'  Trecho: {ex.get("conversa_trecho", "")[:200]}\n'
@@ -133,7 +144,7 @@ def analisar_conversa(client, conv, system_prompt, tentativas=3):
     for tentativa in range(1, tentativas + 1):
         try:
             resposta = client.messages.create(
-                model='claude-opus-4-5',
+                model='claude-haiku-4-5-20251001',
                 max_tokens=1000,
                 system=system_prompt,
                 messages=[{'role': 'user', 'content': mensagem}]
@@ -184,7 +195,7 @@ def analisar_todas(conversas, api_key, on_progresso=None):
         if on_progresso:
             on_progresso(i + 1, resultado)
 
-        time.sleep(1.5)
+        time.sleep(0.5)
 
     return conversas
 
@@ -249,7 +260,6 @@ def _kpi(ws, row, label, valor, fill=None):
 def gerar_excel(conversas, caminho_saida):
     wb = openpyxl.Workbook()
 
-    # ── ABA 1: CONVERSAS COMPLETAS ───────────────────────────────────────────
     ws1 = wb.active
     ws1.title = 'conversas_completas'
     cols1 = ['Paciente', 'Telefone', 'Plataforma', 'Data Início', 'Data Fim',
@@ -294,7 +304,6 @@ def gerar_excel(conversas, caminho_saida):
                   'G': 22, 'H': 20, 'I': 22, 'J': 10, 'K': 12,
                   'L': 38, 'M': 50, 'N': 50, 'O': 60})
 
-    # ── ABA 2: ANÁLISE EXECUTIVA ─────────────────────────────────────────────
     ws2 = wb.create_sheet('analise_executiva')
 
     pacientes    = [c for c in conversas if c.get('tipo_conversa') == 'paciente_externo']
@@ -310,10 +319,9 @@ def gerar_excel(conversas, caminho_saida):
     n_nag        = len(nag_list)
     taxa         = f'{n_ag / len(pacientes) * 100:.1f}%' if pacientes else '0%'
 
-    _secao(ws2, 1, '📊 ANÁLISE EXECUTIVA — CLÍNICA CLIMES')
+    _secao(ws2, 1, '📊 ANÁLISE EXECUTIVA — CLINICDESK ANÁLISES')
     ws2.row_dimensions[1].height = 26
 
-    # Total + distribuição fechando em B3
     _kpi(ws2, 3, 'Total de conversas no período', total)
     r = 4
     tipos_dist = [
@@ -349,7 +357,6 @@ def gerar_excel(conversas, caminho_saida):
     _kpi(ws2, r, '  Taxa de conversão', taxa, YLW_FILL)
     r += 2
 
-    # Motivos
     _secao(ws2, r, '🔍 MOTIVOS DE NÃO AGENDAMENTO', 4)
     r += 1
     for ci, lbl in enumerate(['Motivo', 'Qtd', '% do total não agendados'], 1):
@@ -365,7 +372,6 @@ def gerar_excel(conversas, caminho_saida):
         _body(ws2, r, 3)
         r += 1
 
-    # Por médico
     r += 1
     _secao(ws2, r, '👨‍⚕️ AGENDAMENTOS POR MÉDICO', 5)
     r += 1
@@ -386,7 +392,6 @@ def gerar_excel(conversas, caminho_saida):
         _body(ws2, r, 5)
         r += 1
 
-    # Total médico
     ws2.cell(r, 1).value = 'TOTAL'
     ws2.cell(r, 2).value = n_ag
     ws2.cell(r, 3).value = n_nag
@@ -397,7 +402,6 @@ def gerar_excel(conversas, caminho_saida):
         ws2.cell(r, c).font = Font(bold=True, name='Arial', size=9)
     r += 1
 
-    # Falhas da clínica
     r += 1
     falhas = [c for c in nag_list if c.get('responsavel') == 'clinica']
     _secao(ws2, r, f'🔴 FALHAS DA CLÍNICA — {len(falhas)} casos', 4)
