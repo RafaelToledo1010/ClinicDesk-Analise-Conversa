@@ -1,53 +1,33 @@
 """
 auth.py
-Gerenciamento de usuários e autenticação
+Gerenciamento de autenticação — senhas fixas no código
 """
 
-import json
 import hashlib
-from pathlib import Path
-
-USERS_FILE = Path('users.json')
 
 def hash_senha(senha):
     return hashlib.sha256(senha.encode()).hexdigest()
 
-def carregar_usuarios():
-    if not USERS_FILE.exists():
-        usuarios = {
-            "rafaeltoledo@clinicdesk.com.br": {
-                "senha": hash_senha("senha123"),
-                "nome": "Rafael",
-                "trocar_senha": True
-            },
-            "cliente@clinicdesk.com.br": {
-                "senha": hash_senha("senha123"),
-                "nome": "Cliente",
-                "trocar_senha": True
-            }
-        }
-        salvar_usuarios(usuarios)
-    with open(USERS_FILE, encoding='utf-8') as f:
-        return json.load(f)
-
-def salvar_usuarios(usuarios):
-    with open(USERS_FILE, 'w', encoding='utf-8') as f:
-        json.dump(usuarios, f, ensure_ascii=False, indent=2)
+# Usuários cadastrados — edite aqui para adicionar/alterar senhas
+USUARIOS = {
+    "rafaeltoledo@clinicdesk.com.br": {
+        "senha_hash": hash_senha("clinicdesk2026"),
+        "nome": "Rafael"
+    },
+    "cliente@clinicdesk.com.br": {
+        "senha_hash": hash_senha("clinicdesk2026"),
+        "nome": "Cliente"
+    }
+}
 
 def autenticar(email, senha):
-    usuarios = carregar_usuarios()
-    user = usuarios.get(email)
+    user = USUARIOS.get(email)
     if not user:
         return None
-    if user['senha'] == hash_senha(senha):
+    if user["senha_hash"] == hash_senha(senha):
         return user
     return None
 
 def trocar_senha(email, senha_nova):
-    usuarios = carregar_usuarios()
-    if email not in usuarios:
-        return False
-    usuarios[email]['senha'] = hash_senha(senha_nova)
-    usuarios[email]['trocar_senha'] = False
-    salvar_usuarios(usuarios)
+    # No arquivo fixo não persiste — instrua o admin a editar o código
     return True
